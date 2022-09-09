@@ -1,0 +1,503 @@
+#pragma kernel ComputeDensityPressure
+#pragma kernel ComputeForces
+#pragma kernel ComputeColliders
+
+struct SPHParticle
+{
+    float3 velocity;
+    float3 force;
+    float3 acc;
+    float pressure;
+};
+
+
+struct SPHCollider
+{
+    float3 position;
+    float3 minBound;
+    float3 maxBound;
+    float3 normal;
+    float3 right;
+    float3 up;
+    float2 scale;
+};
+
+shared RWStructuredBuffer<SPHParticle> particlesRead;
+shared RWStructuredBuffer<SPHParticle> particlesWrite;
+shared RWStructuredBuffer<float> particlesDensity;
+shared RWStructuredBuffer<float3> particlePositionsRead;
+shared RWStructuredBuffer<float3> particlePositionsWrite;
+shared StructuredBuffer<SPHCollider> colliders;
+shared StructuredBuffer<int2> Table;
+shared StructuredBuffer<int2> IndexMap;
+RWStructuredBuffer<int> wrongStep;
+
+
+//Passed from SPHFluid.cs
+int positionBufferIndex;
+
+int tsunamiSurfaceIndex = 0;
+bool tsunamiIsTriggered = false;
+float3 tsunamiDirection;
+
+int particleCount;
+int colliderCount;
+float smoothingRadius;
+float smoothingRadiusSq;
+
+float EPS;
+float3 g;
+
+float mass;
+float rest_density;
+float pdist;
+float particleRadius;
+float H;// kernel radius
+float H2;// h2 = h * h;
+float acc_limit;
+float damping;
+float bound_repul;
+
+float Kp;// Pressure Stiffness
+float visc;// Viscosity
+float tension;// Surface Tension
+float dt;// time step
+
+float Wpoly6C;
+float Grad_WspikeC;
+float Lapl_WviscC;
+
+float tsunamiMagnitude;
+float3 tsunmaiMinBound;
+float3 tsunmaiMaxBound;
+
+float3 penetrationNormal;
+float penetrationLength;
+float3 penetrationPosition;
+
+float3 normal;
+float3 surface;
+
+float HashScale;
+float3 HashSize;
+float3 HashTranslate;
+
+#define PI 3.1415926536
+#define PARTICLETHREADCOUNT 1024
+
+#define LOOP_START \
+[unroll] \
+for (int k = -1; k <= 1; k++) \
+{ \
+[unroll] \
+for (int j = -1; j <= 1; j++) \
+{ \
+[unroll] \
+for (int i = -1; i <= 1; i++) \
+{ \
+
+#define LOOP_END \
+} } } \
+
+
+// Helpers
+float dist(float3 A)
+{
+    return length(A);
+}
+float dist2(float3 A)
+{
+    return dot(A , A);
+}
+
+
+float Wpoly6(float3 r)
+{
+    float r2 = dist2(r);
+    if (H2 < r2) return 0;
+
+    float d = (H2 - r2);
+    return Wpoly6C * d * d * d;
+}
+
+float3 Grad_Wspike(float3 r)
+{
+    float r2 = dist2(r);
+    if (H2 < r2) return float3(0, 0, 0);
+
+    float rlen = dist(r);
+    float d = (H - rlen);
+    return (-1) * Grad_WspikeC * d * d / rlen * r;
+}
+
+float Lapl_Wvisc(float3 r)
+{
+    float rlen = dist(r);
+    if (H < rlen) return 0;
+
+    return Lapl_WviscC * (H - rlen);
+}
+
+float pressure(float density)
+{
+    return Kp * (density - rest_density);
+}
+
+bool inBounds(float3 minBound, float3 maxBound, float3 position)
+{
+    float mnx = min(minBound.x, maxBound.x);
+    float mny = min(minBound.y, maxBound.y);
+    float mnz = min(minBound.z, maxBound.z);
+
+    float mxx = max(minBound.x, maxBound.x);
+    float mxy = max(minBound.y, maxBound.y);
+    float mxz = max(minBound.z, maxBound.z);
+    
+    return (
+        mnx <= position.x &&
+        mny <= position.y &&
+        mnz <= position.z &&
+        position.x <= mxx &&
+        position.y <= mxy &&
+        position.z <= mxz
+    );
+}
+
+
+bool Intersect(SPHCollider collider, float3 position){
+
+    float3 normal = collider.normal;
+    float3 minBound = collider.minBound;
+    float3 maxBound = collider.maxBound;
+    
+    float distance = dot(position - collider.position , collider.normal);
+    
+    float3 colliderProjection = position - distance*collider.normal;
+
+    if (abs(distance) < particleRadius &&
+        inBounds(minBound , maxBound , colliderProjection))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+bool isPent(SPHCollider collider, float3 p0, float3 p1)
+{
+    float3 normal = collider.normal;
+    float3 p = collider.position;
+    
+	//u = sub_v3v3(p1, p0)
+	//dot = dot_v3v3(p_no, u)
+    float3 u = p1 - p0;
+    float _dot = dot(normal, u);
+
+    if (abs(_dot) > 0)
+    {
+		//w = sub_v3v3(p0, p_co)
+        float3 w = p0 - p;
+        
+        //fac = -dot_v3v3(p_no, w) / dot
+        float fac = -dot(normal, w) / _dot;
+        
+        //u = mul_v3_fl(u, fac)
+        u *= fac;
+        
+        //return add_v3v3(p0, u)
+        float3 res = p0 + u;
+
+        if (inBounds(collider.minBound, collider.maxBound, res) && inBounds(p0, p1, res))
+        {
+            //return (1, res.x, res.y, res.z);
+            return true;
+        }
+        else
+            return false;
+            //return (0, 0, 0, 0);
+    }
+    return false;
+    //return (0, 0, 0, 0);
+}
+
+int3 HashIndex(float3 p)
+{
+    p = (p - HashTranslate) * HashScale;
+    return clamp(p, 0, HashSize - 1);
+}
+
+
+[numthreads(PARTICLETHREADCOUNT,1,1)]
+void ComputeDensityPressure (int id : SV_DispatchThreadID)
+{
+    float3 particlePosition = particlePositionsRead[id.x];
+    float particleDensity = particlesDensity[id.x];
+
+
+    particleDensity = 0;
+    int3 hashIndex = HashIndex(particlePosition);
+    int3 size = HashSize;
+    int sizexy = size.x * size.y;
+    if (id.x < particleCount)
+    {
+    
+	LOOP_START
+
+                int xi = hashIndex.x + i;
+                int yj = hashIndex.y + j;
+                int zk = hashIndex.z + k;
+
+                if (xi < 0 || xi >= size.x)
+                    continue;
+                if (yj < 0 || yj >= size.y)
+                    continue;
+                if (zk < 0 || zk >= size.z)
+                    continue;
+
+                int hash = xi + yj * size.x + zk * sizexy;
+                    int2 bounds = Table[hash];
+
+                    for (int idx = bounds.x; idx <= bounds.y; idx++)
+                {
+                    
+                    int n = IndexMap[idx].y;
+                    if (IndexMap[idx].x != hash)
+                        continue;
+
+
+                    float3 relativePosition = particlePositionsRead[n] - particlePosition;
+                    float rP2 = dot(relativePosition, relativePosition);
+
+
+                    if (rP2 < smoothingRadiusSq)
+                    {
+                        //neighbors[id.x]++;
+                        particleDensity += mass * Wpoly6(relativePosition);
+                    }
+                }
+
+	LOOP_END
+    }
+    particlesDensity[id.x] = particleDensity;
+
+}
+
+
+[numthreads(PARTICLETHREADCOUNT,1,1)]
+void ComputeForces (int id : SV_DispatchThreadID)
+{
+    SPHParticle particle = particlesRead[id.x];
+    float3 particlePosition = particlePositionsRead[id.x];
+    float particleDensity = particlesDensity[id.x];
+
+    
+    // tsunami force
+    
+    float3 f_tsunami = float3(0, 0, 0);
+     
+    if(tsunamiIsTriggered)
+    {
+        if (!Intersect(colliders[tsunamiSurfaceIndex] , particlePosition))//collision_bounds[j].Contains(projection))
+        {
+            //f_tsunami = tsunamiMagnitude * colliders[tsunamiSurfaceIndex].normal;
+            //f_tsunami = tsunamiMagnitude * tsunamiDirection;
+            //f_tsunami = tsunamiMagnitude * colliders[tsunamiSurfaceIndex].up * (-1);
+
+        }
+    }
+    
+
+    float3 f_out = particleDensity * (g + f_tsunami); // Gravitation
+
+    float3 f_tens = float3(0, 0, 0); // Surface Tension
+    float3 f_pres = float3(0, 0, 0); // Pressure Gradient
+    float3 f_visc = float3(0, 0, 0); // Viscosity
+
+    int3 hashIndex = HashIndex(particlePosition);
+    int3 size = HashSize;
+    int sizexy = size.x * size.y;
+    
+	LOOP_START
+
+                int xi = hashIndex.x + i;
+                int yj = hashIndex.y + j;
+                int zk = hashIndex.z + k;
+
+                if (xi < 0 || xi >= size.x)
+                    continue;
+                if (yj < 0 || yj >= size.y)
+                    continue;
+                if (zk < 0 || zk >= size.z)
+                    continue;
+
+                int hash = xi + yj * size.x + zk * sizexy;
+                int2 bounds = Table[hash];
+                for (int idx = bounds.x; idx <= bounds.y; idx++)
+                {
+                    int n = IndexMap[idx].y;
+                    if (IndexMap[idx].x != hash)
+                        continue;
+                    if (n == id.x)
+                        continue;
+
+
+                    SPHParticle particleJ = particlesRead[n];
+                    float3 particleJPosition = particlePositionsRead[n];
+                    float particleJDensity = particlesDensity[n];
+
+
+
+                    float3 relativePosition = particlePosition - particleJPosition;
+                    float rP2 = dot(relativePosition, relativePosition);
+                    
+                    if (rP2 < smoothingRadiusSq)
+                    {
+                        float denI = particleDensity;
+                        float3 velI = particle.velocity;
+                    
+                        float denJ = particleJDensity;
+                        float3 velJ = particleJ.velocity;
+
+                        float ave_P = (pressure(denI) + pressure(denJ)) / 2;
+                        
+                        f_tens = f_tens - tension * Wpoly6(relativePosition) * denI * relativePosition;  // Surface Tension
+                        f_pres = f_pres - ave_P * mass / denJ * Grad_Wspike(relativePosition); // Pressure Gradient
+                        f_visc = f_visc + (visc * mass / denJ * Lapl_Wvisc(relativePosition)) * (velJ - velI); // Viscosity
+                    }
+                }
+
+	LOOP_END
+
+    particle.acc = (f_out + f_pres + f_visc + f_tens) / particleDensity;
+
+    particlesRead[id.x] = particle;
+    particlesDensity[id.x] = particleDensity;
+}
+
+/*
+[numthreads(PARTICLETHREADCOUNT,1,1)]
+void Integrate (uint3 id : SV_DispatchThreadID)
+{
+    SPHParticle particle = particles[id.x];
+    float3 particlePosition = particlePositions[id.x];
+    
+    particle.velocity += deltaTime * particle.force / particle.density;
+    particlePosition += deltaTime * particle.velocity;
+
+    particles[id.x] = particle;
+    particlePositions[id.x] = particlePosition;
+}
+*/
+
+[numthreads(PARTICLETHREADCOUNT,1,1)]
+void ComputeColliders (int id : SV_DispatchThreadID)
+{
+    SPHParticle particle = particlesRead[id.x];
+    float3 particlePosition = particlePositionsRead[id.x];
+    
+    
+    float accel2 = dist2(particle.acc);
+    if (accel2 > acc_limit * acc_limit)
+        particle.acc = particle.acc / dist(particle.acc) * acc_limit;
+    
+    
+    if (tsunamiIsTriggered && inBounds(tsunmaiMinBound, tsunmaiMaxBound, particlePositionsRead[id.x]))
+    {
+        /*float dis = abs(dot(particlePosition - surface, normal));
+        if (dis <= abs((particlePositionsRead[id.x].y - (-91.89206))))
+        {
+            particle.acc.y = 10 * tsunamiMagnitude * 1/dis; // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+        }
+        else */
+        
+        particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+        //particle.acc.z = 0.2 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))) * (-1);
+
+          //particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+          //particle.acc.z = 0.2 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))) * colliders[tsunamiSurfaceIndex].up.z * (-1);
+    }
+    
+    for (int i = 0; i < colliderCount; i++)
+    {
+        if(tsunamiIsTriggered && i == tsunamiSurfaceIndex) continue;
+
+        SPHCollider collider = colliders[i];
+
+        if (Intersect(collider, particlePosition))
+        {
+            float3 normal = collider.normal;
+            float dis = dot(particlePosition - collider.position , normal);
+
+            float xdisp = particleRadius - abs(dis);
+        
+            particle.acc = particle.acc + bound_repul * xdisp * normal
+            - damping * dot(particle.velocity, normal) * normal;
+        }
+    }
+    
+    particle.velocity = particle.velocity + particle.acc * dt;
+    
+    particlePosition = particlePosition + particle.velocity * dt;
+
+    particlesWrite[id.x] = particle;
+    particlePositionsWrite[id.x] = particlePosition;
+    
+    if (dist(particlesWrite[id.x].velocity) * dt > 50)
+    {
+       //wrongStep[0] = 1;
+    }
+    
+}
+/*
+float3 isPent(SPHCollider collider, float3 p0, float3 p1)
+{
+    float3 normal = collider.normal;
+    float3 p = collider.position;
+    
+	//u = sub_v3v3(p1, p0)
+	//dot = dot_v3v3(p_no, u)
+    float3 u = p1 - p0;
+    float _dot = dot(normal, u);
+
+    if (abs(_dot) > 0)
+    {
+		//w = sub_v3v3(p0, p_co)
+        float3 w = p0 - p;
+        
+        //fac = -dot_v3v3(p_no, w) / dot
+        float fac = -dot(normal, w) / _dot;
+        
+        //u = mul_v3_fl(u, fac)
+        u *= fac;
+        
+        //return add_v3v3(p0, u)
+        float3 res = p0 + u;
+
+        if (inBounds(collider.minBound, collider.maxBound, res) && inBounds(p0, p1, res))
+        {
+            //return (1, res.x, res.y, res.z);
+            //return true;
+        }
+        else
+            return false;
+            //return (0, 0, 0, 0);
+    }
+    return false;
+    //return (0, 0, 0, 0);
+}
+*/
+/*
+for (int i = 0; i < colliderCount; i++)
+    {
+        // to do, add tsunami handaler
+        //if (tsunamiIsTriggered && i == tsunamiSurfaceIndex)
+        //    continue;
+
+        SPHCollider collider = colliders[i];
+
+        if ( isPent(collider, particlePositionsRead[id.x], particlePositionsWrite[id.x]) )
+        {
+            //wrongStep[0] = 1;
+        }
+    }
+*/
