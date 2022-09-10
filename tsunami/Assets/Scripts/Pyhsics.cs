@@ -30,16 +30,12 @@ public class Pyhsics : MonoBehaviour
     private const float EPS = 0.0001f;
     private readonly Vector3 g = new Vector3(0, -9.82f / 0.004f, 0);
 
-    public float ParticleVolume;
-    public float ParticleDensity;
-
     private const float mass = 0.00020543f;
     private const float rest_density = 600.0f * 0.004f * 0.004f * 0.004f;
+    public float particleDensity = 1000.0f;
     private readonly float pdist = Mathf.Pow(mass / rest_density, 1.0f / 3.0f);
     public float particleRadius = 2.0f;
 
-    public float H;
-    public float H2;
     public float acc_limit = 10000.0f;
     private const float damping = 256.0f;
     private const float bound_repul = 10000.0f;
@@ -49,11 +45,18 @@ public class Pyhsics : MonoBehaviour
     private const float tension = 150.0f; // Surface Tension
     public float dt = 0.004f; // time step
 
-    private float Wpoly6C;
-    private float Grad_WspikeC;
-    private float Lapl_WviscC;
-    public int rowSize = 60;
+    public const float H = 0.01f / 0.004f;
+    public float H2 = H * H;
+
+    private float Wpoly6C = 315.0f / 64.0f / Mathf.PI / Mathf.Pow(H, 9);
+    private float Grad_WspikeC = 45.0f / Mathf.PI / Mathf.Pow(H, 6);
+    private float Lapl_WviscC = 45.0f / Mathf.PI / Mathf.Pow(H, 6);
+
+    // Variable based on the previous contsants
+    public float ParticleVolume;
+
     
+
     /* ===================== */
 
     int kernelComputeDensityPressure;
@@ -82,34 +85,20 @@ public class Pyhsics : MonoBehaviour
     public GridHash Hash { get; private set; }
     public Bounds boundr;
 
+    public int particlesNumber = 0;
 
-    // needed from manager
+    // assigned by manager
     public Transform boundary;
     public Transform spawnerPos;
     public ComputeShader shader;
-    public Bounds spawnBounds;
-    public int amount = 0;
+    
 
     List<Vector3> positions = new List<Vector3>();
     
-    void initVars()
+    public void initSPH()
     {
-        ParticleVolume = (4.0f / 3.0f) * Mathf.PI * Mathf.Pow(particleRadius, 3);
-        ParticleDensity = 1000.0f;
-
-        //H = particleRadius*2;
-        H = 0.01f / 0.004f;
-        //H = 2.53f;
-        H2 = H * H;
-
-        Wpoly6C = 315.0f / 64.0f / Mathf.PI / Mathf.Pow(H, 9);
-        Grad_WspikeC = 45.0f / Mathf.PI / Mathf.Pow(H, 6);
-        Lapl_WviscC = 45.0f / Mathf.PI / Mathf.Pow(H, 6);
-
-    }
-    public void InitSPH()
-    {
-        spawnBounds = GameObject.Find("SpawnArea").GetComponent<Renderer>().bounds;
+        // Calculate particle radius based on spawn area
+        Bounds spawnBounds = GameObject.Find("SpawnArea").GetComponent<Renderer>().bounds;
         Vector3 minBound = spawnBounds.min;
         Vector3 maxBound = spawnBounds.max;
 
@@ -117,20 +106,25 @@ public class Pyhsics : MonoBehaviour
         Bounds bounds = new Bounds();
         bounds.SetMinMax(minBound, maxBound);
 
-        particleRadius = Mathf.Pow((bounds.size.x * bounds.size.y * bounds.size.z) / (float)(amount), (float)1 / (float)3) / 1.4f;
-        
+        particleRadius = Mathf.Pow((bounds.size.x * bounds.size.y * bounds.size.z) / (float)(particlesNumber), (float)1 / (float)3) / 1.4f;
+
+        // =============
+
+        // create particle positions and update particles number and particle volume
         CreateParticles(particleRadius, particleRadius * 2f * 0.7f, bounds);
-        amount = positions.Count;
-        initVars();
+        particlesNumber = positions.Count;
 
-        particlesArrayRead = new SPHParticle[amount];
-        particlesArrayWrite = new SPHParticle[amount];
-        particlePositionsArrayRead = new Vector3[amount];
-        particlePositionsArrayWrite = new Vector3[amount];
-        particlesDensityArray = new float[amount];
+        ParticleVolume = (4.0f / 3.0f) * Mathf.PI * Mathf.Pow(particleRadius, 3);
 
 
-        for (int i = 0; i < amount; i++)
+        particlesArrayRead = new SPHParticle[particlesNumber];
+        particlesArrayWrite = new SPHParticle[particlesNumber];
+        particlePositionsArrayRead = new Vector3[particlesNumber];
+        particlePositionsArrayWrite = new Vector3[particlesNumber];
+        particlesDensityArray = new float[particlesNumber];
+
+
+        for (int i = 0; i < particlesNumber; i++)
         {
             particlesArrayRead[i] = new SPHParticle();
             particlesArrayWrite[i] = new SPHParticle();
@@ -162,7 +156,7 @@ public class Pyhsics : MonoBehaviour
                     pos.z = Spacing * z + bounds.min.z + HalfSpacing + rand;
 
                     positions.Add(pos);
-                    amount++;
+                    particlesNumber++;
                 }
             }
         }
@@ -209,7 +203,7 @@ public class Pyhsics : MonoBehaviour
         boundr = new Bounds(boundary.position, boundary.localScale);
 
         bool isRadixSort = SwitchToggle.toggleValues[SwitchToggle.getIndex("Radix Sort")];
-        Hash = new GridHash(boundr, amount, particleRadius, isRadixSort);
+        Hash = new GridHash(boundr, particlesNumber, particleRadius, isRadixSort);
 
         // SHP CONSTS
         setComputeConsts();
@@ -290,7 +284,7 @@ public class Pyhsics : MonoBehaviour
         particlesBufferWrite.GetData(particlesArrayWrite);
 
         bool yes = false;
-        for(int i = 0;i < amount; i++)
+        for(int i = 0;i < particlesNumber; i++)
         {
             if(particlesArrayWrite[i].velocity.magnitude*dt > H)
             {

@@ -36,11 +36,13 @@ public class SPHFluid : MonoBehaviour
 
     SPHCollider[] collidersArray;
     ComputeBuffer collidersBuffer;
+
     ComputeBuffer m_argsBuffer;
 
     public ComputeShader shader;
     
     public GameObject tsunamiMovement;
+
     public Transform boundary;
 
     // Rendering
@@ -55,10 +57,6 @@ public class SPHFluid : MonoBehaviour
     FluidBody body;
     // ===================
 
-    private int particleCount = 32768;
-    private int rowSize = 100;
-    int amount;
-
     int kernelComputeDensityPressure;
     int kernelComputeForces;
     int kernelComputeColliders;
@@ -67,51 +65,39 @@ public class SPHFluid : MonoBehaviour
 
     private bool renderParticles = true;
     private bool renderWater = false;
-    private float acc_limit = 10000f;
 
-    void iniParticlesCount()
+    void ini_groupSize_Variable()
     {
         kernelComputeDensityPressure = shader.FindKernel("ComputeDensityPressure");
         uint numThreadsX;
         shader.GetKernelThreadGroupSizes(kernelComputeDensityPressure, out numThreadsX, out _, out _);
-        groupSize = Mathf.CeilToInt((float)particleCount / (float)numThreadsX);
-        //amount = (int)numThreadsX * groupSize;
+        groupSize = Mathf.CeilToInt(physicsEngine.particlesNumber / (float)numThreadsX);
     }
 
     void iniPhysicsEngine()
     {
         physicsEngine.spawnerPos = transform;
         physicsEngine.boundary = boundary;
-        physicsEngine.amount = particleCount;
+        physicsEngine.particlesNumber = SliderUI.slidersValues[SliderUI.getIndex("Particles")];
         physicsEngine.shader = shader;
-        physicsEngine.rowSize = rowSize;
-        physicsEngine.particleRadius = particleRadius;
-        physicsEngine.acc_limit = acc_limit;
 
-        physicsEngine.InitSPH();
+        physicsEngine.initSPH();
     }
     
 
-    float particleRadius = 2f;
 
     private void Start()
     {
-        //iniParticlesCount();
-
         tsunamiMovement.GetComponent<tsunamiMovement>().shader = shader;
 
-        amount = particleCount = (int)SliderUI.slidersValues[SliderUI.getIndex("Particles")];
         iniPhysicsEngine();
-        particleRadius = physicsEngine.particleRadius;
-        amount = particleCount = physicsEngine.amount;
-        print(amount);
-        iniParticlesCount();
+        ini_groupSize_Variable();
 
         //waterKernel = new Kernel(physicsEngine.particleRadius, physicsEngine.particleRadius * physicsEngine.particleRadius, 29.296875f * Mathf.Pow(particleRadius , 10f)); // 15000.0f / 1.0f);
         waterKernel = new Kernel(physicsEngine.particleRadius, physicsEngine.particleRadius * physicsEngine.particleRadius
-            , 7680000f / Mathf.Pow(particleRadius, 9));
+            , 7680000f / Mathf.Pow(physicsEngine.particleRadius, 9));
 
-        body = new FluidBody(physicsEngine.ParticleDensity, amount, physicsEngine.ParticleVolume);
+        body = new FluidBody(physicsEngine.particleDensity, physicsEngine.particlesNumber, physicsEngine.ParticleVolume);
 
         physicsEngine.initShader();
         InitShader();
@@ -133,21 +119,9 @@ public class SPHFluid : MonoBehaviour
             collidersBuffer = new ComputeBuffer(collidersArray.Length, SIZE_SPHCOLLIDER);
         }
 
-        int tsunamiSurfaceIndex = 0;
-
         for (int i = 0; i < collidersArray.Length; i++)
-        {
             collidersArray[i] = new SPHCollider(collidersGO[i]);
-            if (collidersGO[i].name == "tsunamiSurface")
-            {
-                tsunamiSurfaceIndex = i;
-            }
-
-        }
-        //print(tsunamiSurfaceIndex);
         
-        shader.SetInt("tsunamiSurfaceIndex", tsunamiSurfaceIndex);
-
         collidersBuffer.SetData(collidersArray);
         shader.SetBuffer(kernelComputeColliders, "colliders", collidersBuffer);
         shader.SetBuffer(kernelComputeForces, "colliders", collidersBuffer);
@@ -168,6 +142,8 @@ public class SPHFluid : MonoBehaviour
         shader.Dispatch(kernelComputeColliders, groupSize, 1, 1);
         physicsEngine.adaptiveTimeStep();
 
+
+        // Rendering
         renderWater = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Water")];
         renderParticles = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Particles")];
 
@@ -193,7 +169,7 @@ public class SPHFluid : MonoBehaviour
                 {
                     uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
                     args[0] = particleMesh.GetIndexCount(0);
-                    args[1] = (uint)amount;
+                    args[1] = (uint)physicsEngine.particlesNumber;
 
                     m_argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
                     m_argsBuffer.SetData(args);
@@ -224,8 +200,6 @@ public class SPHFluid : MonoBehaviour
         // Tsunami 
         shader.SetInt("tsunamiSurfaceIndex", 0);
        
-        // ============================
-
         // =========================
         // Collider class
         FetchColliders();
@@ -235,12 +209,12 @@ public class SPHFluid : MonoBehaviour
 
 
         // Manager
-        shader.SetInt("particleCount", amount);
+        shader.SetInt("particleCount", physicsEngine.particlesNumber);
 
 
         // Rendering
         argsArray[0] = particleMesh.GetIndexCount(0);
-        argsArray[1] = (uint)amount;
+        argsArray[1] = (uint)physicsEngine.particlesNumber;
         argsBuffer = new ComputeBuffer(1, 5 * sizeof(uint), ComputeBufferType.IndirectArguments);
         argsBuffer.SetData(argsArray);
         r_material.SetBuffer("particles",physicsEngine.particlePositionsBufferRead);

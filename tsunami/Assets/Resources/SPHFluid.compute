@@ -36,7 +36,6 @@ RWStructuredBuffer<int> wrongStep;
 //Passed from SPHFluid.cs
 int positionBufferIndex;
 
-int tsunamiSurfaceIndex = 0;
 bool tsunamiIsTriggered = false;
 float3 tsunamiDirection;
 
@@ -289,25 +288,9 @@ void ComputeForces (int id : SV_DispatchThreadID)
     SPHParticle particle = particlesRead[id.x];
     float3 particlePosition = particlePositionsRead[id.x];
     float particleDensity = particlesDensity[id.x];
+        
 
-    
-    // tsunami force
-    
-    float3 f_tsunami = float3(0, 0, 0);
-     
-    if(tsunamiIsTriggered)
-    {
-        if (!Intersect(colliders[tsunamiSurfaceIndex] , particlePosition))//collision_bounds[j].Contains(projection))
-        {
-            //f_tsunami = tsunamiMagnitude * colliders[tsunamiSurfaceIndex].normal;
-            //f_tsunami = tsunamiMagnitude * tsunamiDirection;
-            //f_tsunami = tsunamiMagnitude * colliders[tsunamiSurfaceIndex].up * (-1);
-
-        }
-    }
-    
-
-    float3 f_out = particleDensity * (g + f_tsunami); // Gravitation
+    float3 f_out = particleDensity * g; // Gravitation
 
     float3 f_tens = float3(0, 0, 0); // Surface Tension
     float3 f_pres = float3(0, 0, 0); // Pressure Gradient
@@ -419,8 +402,6 @@ void ComputeColliders (int id : SV_DispatchThreadID)
     
     for (int i = 0; i < colliderCount; i++)
     {
-        if(tsunamiIsTriggered && i == tsunamiSurfaceIndex) continue;
-
         SPHCollider collider = colliders[i];
 
         if (Intersect(collider, particlePosition))
@@ -442,10 +423,14 @@ void ComputeColliders (int id : SV_DispatchThreadID)
     particlesWrite[id.x] = particle;
     particlePositionsWrite[id.x] = particlePosition;
     
+
+    // to turn on adabtive time step, uncomment the next 'if'
+    /*
     if (dist(particlesWrite[id.x].velocity) * dt > 50)
     {
-       //wrongStep[0] = 1;
+       wrongStep[0] = 1;
     }
+    */
     
 }
 /*
