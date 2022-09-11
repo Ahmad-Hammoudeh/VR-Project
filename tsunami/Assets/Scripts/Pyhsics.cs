@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using PBDFluid;
 
-public class Pyhsics : MonoBehaviour
+public class Pyhsics
 {
     /* ==== Particle Struct ==== */
     int SIZE_PARTICLEPOSITION = 3 * sizeof(float);
@@ -52,10 +52,8 @@ public class Pyhsics : MonoBehaviour
     private float Grad_WspikeC = 45.0f / Mathf.PI / Mathf.Pow(H, 6);
     private float Lapl_WviscC = 45.0f / Mathf.PI / Mathf.Pow(H, 6);
 
-    // Variable based on the previous contsants
+    // will be assigned after calculating particle radius
     public float ParticleVolume;
-
-    
 
     /* ===================== */
 
@@ -89,13 +87,12 @@ public class Pyhsics : MonoBehaviour
 
     // assigned by manager
     public Transform boundary;
-    public Transform spawnerPos;
     public ComputeShader shader;
     
 
     List<Vector3> positions = new List<Vector3>();
     
-    public void initSPH()
+    public void initParticles()
     {
         // Calculate particle radius based on spawn area
         Bounds spawnBounds = GameObject.Find("SpawnArea").GetComponent<Renderer>().bounds;
@@ -107,16 +104,16 @@ public class Pyhsics : MonoBehaviour
         bounds.SetMinMax(minBound, maxBound);
 
         particleRadius = Mathf.Pow((bounds.size.x * bounds.size.y * bounds.size.z) / (float)(particlesNumber), (float)1 / (float)3) / 1.4f;
-
         // =============
 
-        // create particle positions and update particles number and particle volume
+        // create particle positions, update particles number and particle volume
         CreateParticles(particleRadius, particleRadius * 2f * 0.7f, bounds);
         particlesNumber = positions.Count;
 
         ParticleVolume = (4.0f / 3.0f) * Mathf.PI * Mathf.Pow(particleRadius, 3);
 
 
+        // Initialize particle arrays
         particlesArrayRead = new SPHParticle[particlesNumber];
         particlesArrayWrite = new SPHParticle[particlesNumber];
         particlePositionsArrayRead = new Vector3[particlesNumber];
@@ -132,6 +129,7 @@ public class Pyhsics : MonoBehaviour
             particlePositionsArrayRead[i] = particlePositionsArrayWrite[i] =
                 positions[i];
         }
+        // ============
     }
 
     private void CreateParticles(float radius, float Spacing,Bounds bounds)
@@ -156,33 +154,20 @@ public class Pyhsics : MonoBehaviour
                     pos.z = Spacing * z + bounds.min.z + HalfSpacing + rand;
 
                     positions.Add(pos);
-                    particlesNumber++;
                 }
             }
         }
 
     }
 
-    void getMinMax(ref Vector3 min , ref Vector3 mx)
-    {
-        float mnx = Mathf.Min(min.x, mx.x);
-        float mny = Mathf.Min(min.y, mx.y);
-        float mnz = Mathf.Min(min.z, mx.z);
-
-        float mxx = Mathf.Max(min.x, mx.x);
-        float mxy = Mathf.Max(min.y, mx.y);
-        float mxz = Mathf.Max(min.z, mx.z);
-
-        min = new Vector3(mnx, mny, mnz);
-        mx = new Vector3(mxx, mxy, mxz);
-
-    }
     public void initShader()
     {
         kernelComputeDensityPressure = shader.FindKernel("ComputeDensityPressure");
         kernelComputeForces = shader.FindKernel("ComputeForces");
         kernelComputeColliders = shader.FindKernel("ComputeColliders");
 
+
+        // get buffers data from arrays
         particlesBufferRead = new ComputeBuffer(particlesArrayRead.Length, SIZE_SPHPARTICLE);
         particlesBufferRead.SetData(particlesArrayRead);
 
@@ -198,7 +183,7 @@ public class Pyhsics : MonoBehaviour
         particlesDensityBuffer = new ComputeBuffer(particlesArrayRead.Length, sizeof(float));
         particlesDensityBuffer.SetData(particlesDensityArray);
 
-        //print(particlePositionsBufferRead.count);
+        // ========================
 
         boundr = new Bounds(boundary.position, boundary.localScale);
 
@@ -206,8 +191,10 @@ public class Pyhsics : MonoBehaviour
         Hash = new GridHash(boundr, particlesNumber, particleRadius, isRadixSort);
 
         // SHP CONSTS
-        setComputeConsts();
+        setComputeShaderConsts();
 
+
+        // assign buffers to shader
         shader.SetBuffer(kernelComputeDensityPressure, "particlesRead", particlesBufferRead);
         shader.SetBuffer(kernelComputeForces, "particlesRead", particlesBufferRead);
         shader.SetBuffer(kernelComputeColliders, "particlesRead", particlesBufferRead);
@@ -233,6 +220,7 @@ public class Pyhsics : MonoBehaviour
         shader.SetBuffer(kernelComputeDensityPressure, "IndexMap", Hash.IndexMap);
         shader.SetBuffer(kernelComputeForces, "IndexMap", Hash.IndexMap);
 
+        // =============
         shader.SetFloat("HashScale", Hash.InvCellSize);
         shader.SetVector("HashSize", Hash.Bounds.size);
         shader.SetVector("HashTranslate", Hash.Bounds.min);
@@ -271,49 +259,13 @@ public class Pyhsics : MonoBehaviour
             {
                 dt *= 2f;
             }
-            swapBuffers();
+            swapParticlePositionBuffers();
         }
         //print(dt);
         shader.SetFloat("dt", dt);
     }
 
-    /*
-    public void adaptiveTimeStep()
-    {
-        particlesBufferRead.GetData(particlesArrayRead);
-        particlesBufferWrite.GetData(particlesArrayWrite);
-
-        bool yes = false;
-        for(int i = 0;i < particlesNumber; i++)
-        {
-            if(particlesArrayWrite[i].velocity.magnitude*dt > H)
-            {
-                yes = true;
-            }
-        }
-        if (yes)
-        {
-            if (dt > 0.0005f)
-            {
-                dt /= 2f;
-            }
-        }
-        else
-        {
-            if (dt < 0.004f)
-            {
-                dt *= 2f;
-            }
-            swapBuffers();
-        }
-        print(dt);
-        shader.SetFloat("dt", dt);
-    }*/
-
-        /*
-         
-         */
-    public void swapBuffers()
+    public void swapParticlePositionBuffers()
     {
         ComputeBuffer tmp1 = particlePositionsBufferRead;
         particlePositionsBufferRead = particlePositionsBufferWrite;
@@ -340,7 +292,7 @@ public class Pyhsics : MonoBehaviour
         shader.SetBuffer(kernelComputeColliders, "particlesWrite", particlesBufferWrite);
     }
 
-    void setComputeConsts()
+    void setComputeShaderConsts()
     {
         shader.SetFloat("smoothingRadius", H);
         shader.SetFloat("smoothingRadiusSq", H2);
@@ -367,4 +319,52 @@ public class Pyhsics : MonoBehaviour
         shader.SetFloat("Grad_WspikeC", Grad_WspikeC);
         shader.SetFloat("Lapl_WviscC", Lapl_WviscC);
     }
+
+    void getMinMax(ref Vector3 min, ref Vector3 mx)
+    {
+        float mnx = Mathf.Min(min.x, mx.x);
+        float mny = Mathf.Min(min.y, mx.y);
+        float mnz = Mathf.Min(min.z, mx.z);
+
+        float mxx = Mathf.Max(min.x, mx.x);
+        float mxy = Mathf.Max(min.y, mx.y);
+        float mxz = Mathf.Max(min.z, mx.z);
+
+        min = new Vector3(mnx, mny, mnz);
+        mx = new Vector3(mxx, mxy, mxz);
+
+    }
 }
+
+/*
+public void adaptiveTimeStep()
+{
+    particlesBufferRead.GetData(particlesArrayRead);
+    particlesBufferWrite.GetData(particlesArrayWrite);
+
+    bool yes = false;
+    for(int i = 0;i < particlesNumber; i++)
+    {
+        if(particlesArrayWrite[i].velocity.magnitude*dt > H)
+        {
+            yes = true;
+        }
+    }
+    if (yes)
+    {
+        if (dt > 0.0005f)
+        {
+            dt /= 2f;
+        }
+    }
+    else
+    {
+        if (dt < 0.004f)
+        {
+            dt *= 2f;
+        }
+        swapParticlePositionBuffers();
+    }
+    print(dt);
+    shader.SetFloat("dt", dt);
+}*/

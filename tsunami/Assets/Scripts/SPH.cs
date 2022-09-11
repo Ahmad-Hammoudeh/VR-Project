@@ -190,10 +190,10 @@ public class SPH : MonoBehaviour
         {
             Vector3 f_tsunami = new Vector3(0f, 0f, 0f);
             /*
-            if(tsunamiManager.GetComponent<tsunamiMovement>().isTriggered)
+            if(tsunamiManager.GetComponent<TsunamiMovement>().isTriggered)
             {
-                GameObject surface = tsunamiManager.GetComponent<tsunamiMovement>().surface;
-                Plane plane = tsunamiManager.GetComponent<tsunamiMovement>().surfacePlane;
+                GameObject surface = tsunamiManager.GetComponent<TsunamiMovement>().surface;
+                Plane plane = tsunamiManager.GetComponent<TsunamiMovement>().surfacePlane;
                 Vector3 projection = plane.ClosestPointOnPlane(pos[i]) + plane.normal;
 
                 if (surface.GetComponent<Renderer>().bounds.Contains(projection))//collision_bounds[j].Contains(projection))
@@ -203,7 +203,7 @@ public class SPH : MonoBehaviour
 
                     if (xdisp <= pradi)
                     {
-                        f_tsunami = tsunamiMagnitude * tsunamiManager.GetComponent<tsunamiMovement>().direction;
+                        f_tsunami = tsunamiMagnitude * tsunamiManager.GetComponent<TsunamiMovement>().direction;
                     }
                 }
             }

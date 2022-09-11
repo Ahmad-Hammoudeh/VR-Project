@@ -76,20 +76,17 @@ public class SPHFluid : MonoBehaviour
 
     void iniPhysicsEngine()
     {
-        physicsEngine.spawnerPos = transform;
         physicsEngine.boundary = boundary;
         physicsEngine.particlesNumber = SliderUI.slidersValues[SliderUI.getIndex("Particles")];
         physicsEngine.shader = shader;
 
-        physicsEngine.initSPH();
+        physicsEngine.initParticles();
     }
     
 
 
     private void Start()
-    {
-        tsunamiMovement.GetComponent<tsunamiMovement>().shader = shader;
-
+    {        
         iniPhysicsEngine();
         ini_groupSize_Variable();
 
@@ -101,8 +98,6 @@ public class SPHFluid : MonoBehaviour
 
         physicsEngine.initShader();
         InitShader();
-        //FetchColliders();
-
     }
 
     void FetchColliders()

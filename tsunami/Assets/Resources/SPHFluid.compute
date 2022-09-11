@@ -74,8 +74,8 @@ float3 penetrationNormal;
 float penetrationLength;
 float3 penetrationPosition;
 
-float3 normal;
-float3 surface;
+float3 beachNormal;
+float3 beachSurface;
 
 float HashScale;
 float3 HashSize;
@@ -182,42 +182,6 @@ bool Intersect(SPHCollider collider, float3 position){
     return false;
 }
 
-bool isPent(SPHCollider collider, float3 p0, float3 p1)
-{
-    float3 normal = collider.normal;
-    float3 p = collider.position;
-    
-	//u = sub_v3v3(p1, p0)
-	//dot = dot_v3v3(p_no, u)
-    float3 u = p1 - p0;
-    float _dot = dot(normal, u);
-
-    if (abs(_dot) > 0)
-    {
-		//w = sub_v3v3(p0, p_co)
-        float3 w = p0 - p;
-        
-        //fac = -dot_v3v3(p_no, w) / dot
-        float fac = -dot(normal, w) / _dot;
-        
-        //u = mul_v3_fl(u, fac)
-        u *= fac;
-        
-        //return add_v3v3(p0, u)
-        float3 res = p0 + u;
-
-        if (inBounds(collider.minBound, collider.maxBound, res) && inBounds(p0, p1, res))
-        {
-            //return (1, res.x, res.y, res.z);
-            return true;
-        }
-        else
-            return false;
-            //return (0, 0, 0, 0);
-    }
-    return false;
-    //return (0, 0, 0, 0);
-}
 
 int3 HashIndex(float3 p)
 {
@@ -357,20 +321,6 @@ void ComputeForces (int id : SV_DispatchThreadID)
     particlesDensity[id.x] = particleDensity;
 }
 
-/*
-[numthreads(PARTICLETHREADCOUNT,1,1)]
-void Integrate (uint3 id : SV_DispatchThreadID)
-{
-    SPHParticle particle = particles[id.x];
-    float3 particlePosition = particlePositions[id.x];
-    
-    particle.velocity += deltaTime * particle.force / particle.density;
-    particlePosition += deltaTime * particle.velocity;
-
-    particles[id.x] = particle;
-    particlePositions[id.x] = particlePosition;
-}
-*/
 
 [numthreads(PARTICLETHREADCOUNT,1,1)]
 void ComputeColliders (int id : SV_DispatchThreadID)
@@ -384,20 +334,10 @@ void ComputeColliders (int id : SV_DispatchThreadID)
         particle.acc = particle.acc / dist(particle.acc) * acc_limit;
     
     
+    // other implementations found at the bottom of the file
     if (tsunamiIsTriggered && inBounds(tsunmaiMinBound, tsunmaiMaxBound, particlePositionsRead[id.x]))
     {
-        /*float dis = abs(dot(particlePosition - surface, normal));
-        if (dis <= abs((particlePositionsRead[id.x].y - (-91.89206))))
-        {
-            particle.acc.y = 10 * tsunamiMagnitude * 1/dis; // * colliders[tsunamiSurfaceIndex].up.y * (-1);
-        }
-        else */
-        
         particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
-        //particle.acc.z = 0.2 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))) * (-1);
-
-          //particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
-          //particle.acc.z = 0.2 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))) * colliders[tsunamiSurfaceIndex].up.z * (-1);
     }
     
     for (int i = 0; i < colliderCount; i++)
@@ -471,18 +411,62 @@ float3 isPent(SPHCollider collider, float3 p0, float3 p1)
     //return (0, 0, 0, 0);
 }
 */
+
+
 /*
-for (int i = 0; i < colliderCount; i++)
+bool isPent(SPHCollider collider, float3 p0, float3 p1)
+{
+    float3 normal = collider.normal;
+    float3 p = collider.position;
+
+    //u = sub_v3v3(p1, p0)
+    //dot = dot_v3v3(p_no, u)
+    float3 u = p1 - p0;
+    float _dot = dot(normal, u);
+
+    if (abs(_dot) > 0)
     {
-        // to do, add tsunami handaler
-        //if (tsunamiIsTriggered && i == tsunamiSurfaceIndex)
-        //    continue;
+        //w = sub_v3v3(p0, p_co)
+        float3 w = p0 - p;
 
-        SPHCollider collider = colliders[i];
+        //fac = -dot_v3v3(p_no, w) / dot
+        float fac = -dot(normal, w) / _dot;
 
-        if ( isPent(collider, particlePositionsRead[id.x], particlePositionsWrite[id.x]) )
+        //u = mul_v3_fl(u, fac)
+        u *= fac;
+
+        //return add_v3v3(p0, u)
+        float3 res = p0 + u;
+
+        if (inBounds(collider.minBound, collider.maxBound, res) && inBounds(p0, p1, res))
         {
-            //wrongStep[0] = 1;
+            //return (1, res.x, res.y, res.z);
+            return true;
         }
+        else
+            return false;
+            //return (0, 0, 0, 0);
     }
+    return false;
+    //return (0, 0, 0, 0);
+}
+*/
+
+
+/*
+if (tsunamiIsTriggered && inBounds(tsunmaiMinBound, tsunmaiMaxBound, particlePositionsRead[id.x]))
+{
+    float dis = abs(dot(particlePosition - beachSurface, beachNormal));
+    if (dis <= abs((particlePositionsRead[id.x].y - (-91.89206))))
+    {
+        particle.acc.y = 10 * tsunamiMagnitude * 1/dis; // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+    }
+    else 
+
+    particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+    particle.acc.z = 0.2 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))) * (-1);
+
+    particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+    particle.acc.z = 0.2 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))) * colliders[tsunamiSurfaceIndex].up.z * (-1);
+}
 */

@@ -122,7 +122,7 @@ namespace PBDFluid
         }
 
         /// <summary>
-        /// A inverted cube (material culls front) needs
+        /// A inverted tsunamiCube (material culls front) needs
         /// to be draw for the ray tracing of the volume.
         /// </summary>
         public void CreateMesh(Material material)
