@@ -4,38 +4,11 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using PBDFluid;
 
-public class SPHFluid : MonoBehaviour
+public class Manager : MonoBehaviour
 {
 
     Pyhsics physicsEngine = new Pyhsics();
-
-    /* ==== Collider Struct ==== */
-    private struct SPHCollider
-    {
-        public Vector3 position;
-        public Vector3 minBound;
-        public Vector3 maxBound;
-        public Vector3 normal;
-        public Vector3 right;
-        public Vector3 up;
-        public Vector2 scale;
-        public SPHCollider(GameObject surface)
-        {
-            position = surface.transform.position;// + surface.transform.forward;
-
-            minBound = surface.GetComponent<Renderer>().bounds.min;// + surface.transform.forward;
-            maxBound = surface.GetComponent<Renderer>().bounds.max;// + surface.transform.forward;
-            normal = -1 * surface.transform.forward;
-            right = surface.transform.right;
-            up = surface.transform.up;
-            scale = new Vector2(surface.transform.lossyScale.x / 2f, surface.transform.lossyScale.y / 2f);
-        }
-    }
-    int SIZE_SPHCOLLIDER = 20 * sizeof(float);
-    /* ===================== */
-
-    SPHCollider[] collidersArray;
-    ComputeBuffer collidersBuffer;
+    SurfaceColliderManager surfaceColliderManager = new SurfaceColliderManager();
 
     ComputeBuffer m_argsBuffer;
 
@@ -74,20 +47,12 @@ public class SPHFluid : MonoBehaviour
         groupSize = Mathf.CeilToInt(physicsEngine.particlesNumber / (float)numThreadsX);
     }
 
-    void iniPhysicsEngine()
-    {
-        physicsEngine.boundary = boundary;
-        physicsEngine.particlesNumber = SliderUI.slidersValues[SliderUI.getIndex("Particles")];
-        physicsEngine.shader = shader;
-
-        physicsEngine.initParticles();
-    }
-    
-
-
     private void Start()
-    {        
-        iniPhysicsEngine();
+    {
+        physicsEngine.initialize(boundary , 
+            SliderUI.slidersValues[SliderUI.getIndex("Particles")] ,
+            shader);
+
         ini_groupSize_Variable();
 
         //waterKernel = new Kernel(physicsEngine.particleRadius, physicsEngine.particleRadius * physicsEngine.particleRadius, 29.296875f * Mathf.Pow(particleRadius , 10f)); // 15000.0f / 1.0f);
@@ -96,36 +61,14 @@ public class SPHFluid : MonoBehaviour
 
         body = new FluidBody(physicsEngine.particleDensity, physicsEngine.particlesNumber, physicsEngine.ParticleVolume);
 
-        physicsEngine.initShader();
-        InitShader();
-    }
+        surfaceColliderManager.shader = shader;
+        surfaceColliderManager.fetchColliders();
 
-    void FetchColliders()
-    {
-        // Get colliders
-        GameObject[] collidersGO = GameObject.FindGameObjectsWithTag("SPHCollider");
-        if (collidersArray == null || collidersArray.Length != collidersGO.Length)
-        {
-            collidersArray = new SPHCollider[collidersGO.Length];
-            if (collidersBuffer != null)
-            {
-                collidersBuffer.Dispose();
-            }
-            collidersBuffer = new ComputeBuffer(collidersArray.Length, SIZE_SPHCOLLIDER);
-        }
-
-        for (int i = 0; i < collidersArray.Length; i++)
-            collidersArray[i] = new SPHCollider(collidersGO[i]);
-        
-        collidersBuffer.SetData(collidersArray);
-        shader.SetBuffer(kernelComputeColliders, "colliders", collidersBuffer);
-        shader.SetBuffer(kernelComputeForces, "colliders", collidersBuffer);
-
+        initShader();
     }
 
     private void Update()
     {
-        FetchColliders();
         physicsEngine.Hash.Process(physicsEngine.particlePositionsBufferRead);
         physicsEngine.Hash.MapTable();
 
@@ -137,7 +80,7 @@ public class SPHFluid : MonoBehaviour
         shader.Dispatch(kernelComputeColliders, groupSize, 1, 1);
         physicsEngine.adaptiveTimeStep();
 
-
+        
         // Rendering
         renderWater = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Water")];
         renderParticles = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Particles")];
@@ -180,27 +123,17 @@ public class SPHFluid : MonoBehaviour
                 Graphics.DrawMeshInstancedIndirect(particleMesh, 0, material, physicsEngine.boundr, m_argsBuffer, 0, null, castShadow, recieveShadow, 0, Camera.main);
             }
         }
-        
+
         //m_volume.Hide = true;
         physicsEngine.Hash.Clear();
 
     }
     
-    void InitShader()
+    void initShader()
     {
         kernelComputeDensityPressure = shader.FindKernel("ComputeDensityPressure");
         kernelComputeForces = shader.FindKernel("ComputeForces");
         kernelComputeColliders = shader.FindKernel("ComputeColliders");
-
-        // Tsunami 
-        shader.SetInt("tsunamiSurfaceIndex", 0);
-       
-        // =========================
-        // Collider class
-        FetchColliders();
-        shader.SetInt("colliderCount", collidersArray.Length);
-        shader.SetBuffer(kernelComputeColliders, "colliders", collidersBuffer);
-        shader.SetBuffer(kernelComputeForces, "colliders", collidersBuffer);
 
 
         // Manager
@@ -227,7 +160,7 @@ public class SPHFluid : MonoBehaviour
         physicsEngine.particlesDensityBuffer.Dispose();
         physicsEngine.particlePositionsBufferRead.Dispose();
         physicsEngine.particlePositionsBufferWrite.Dispose();
-        collidersBuffer.Dispose();
+        surfaceColliderManager.OnDestroy();
         argsBuffer.Dispose();
     }
 }

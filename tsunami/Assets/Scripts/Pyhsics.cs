@@ -92,6 +92,15 @@ public class Pyhsics
 
     List<Vector3> positions = new List<Vector3>();
     
+    public void initialize(Transform _boundary , int _particlesNumber , ComputeShader _shader)
+    {
+        boundary = _boundary;
+        particlesNumber = _particlesNumber;
+        shader = _shader;
+
+        initParticles();
+        initShader();
+    }
     public void initParticles()
     {
         // Calculate particle radius based on spawn area

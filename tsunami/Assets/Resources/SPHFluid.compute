@@ -337,7 +337,7 @@ void ComputeColliders (int id : SV_DispatchThreadID)
     // other implementations found at the bottom of the file
     if (tsunamiIsTriggered && inBounds(tsunmaiMinBound, tsunmaiMaxBound, particlePositionsRead[id.x]))
     {
-        particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206))); // * colliders[tsunamiSurfaceIndex].up.y * (-1);
+        particle.acc.y = 0.1 * tsunamiMagnitude * abs((particlePositionsRead[id.x].y - (-91.89206)));
     }
     
     for (int i = 0; i < colliderCount; i++)
