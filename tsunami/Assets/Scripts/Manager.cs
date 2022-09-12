@@ -7,15 +7,13 @@ using PBDFluid;
 public class Manager : MonoBehaviour
 {
 
-    Pyhsics physicsEngine = new Pyhsics();
+    SPH SPHManager = new SPH();
     SurfaceColliderManager surfaceColliderManager = new SurfaceColliderManager();
 
     ComputeBuffer m_argsBuffer;
 
     public ComputeShader shader;
     
-    public GameObject tsunamiMovement;
-
     public Transform boundary;
 
     // Rendering
@@ -30,36 +28,20 @@ public class Manager : MonoBehaviour
     FluidBody body;
     // ===================
 
-    int kernelComputeDensityPressure;
-    int kernelComputeForces;
-    int kernelComputeColliders;
-
-    int groupSize;
-
     private bool renderParticles = true;
     private bool renderWater = false;
 
-    void ini_groupSize_Variable()
-    {
-        kernelComputeDensityPressure = shader.FindKernel("ComputeDensityPressure");
-        uint numThreadsX;
-        shader.GetKernelThreadGroupSizes(kernelComputeDensityPressure, out numThreadsX, out _, out _);
-        groupSize = Mathf.CeilToInt(physicsEngine.particlesNumber / (float)numThreadsX);
-    }
-
     private void Start()
     {
-        physicsEngine.initialize(boundary , 
+        SPHManager.initialize(boundary , 
             SliderUI.slidersValues[SliderUI.getIndex("Particles")] ,
             shader);
 
-        ini_groupSize_Variable();
+        //waterKernel = new Kernel(SPHManager.particleRadius, SPHManager.particleRadius * SPHManager.particleRadius, 29.296875f * Mathf.Pow(particleRadius , 10f)); // 15000.0f / 1.0f);
+        waterKernel = new Kernel(SPHManager.particleRadius, SPHManager.particleRadius * SPHManager.particleRadius
+            , 7680000f / Mathf.Pow(SPHManager.particleRadius, 9));
 
-        //waterKernel = new Kernel(physicsEngine.particleRadius, physicsEngine.particleRadius * physicsEngine.particleRadius, 29.296875f * Mathf.Pow(particleRadius , 10f)); // 15000.0f / 1.0f);
-        waterKernel = new Kernel(physicsEngine.particleRadius, physicsEngine.particleRadius * physicsEngine.particleRadius
-            , 7680000f / Mathf.Pow(physicsEngine.particleRadius, 9));
-
-        body = new FluidBody(physicsEngine.particleDensity, physicsEngine.particlesNumber, physicsEngine.ParticleVolume);
+        body = new FluidBody(SPHManager.particleDensity, SPHManager.particlesNumber, SPHManager.ParticleVolume);
 
         surfaceColliderManager.shader = shader;
         surfaceColliderManager.fetchColliders();
@@ -69,17 +51,7 @@ public class Manager : MonoBehaviour
 
     private void Update()
     {
-        physicsEngine.Hash.Process(physicsEngine.particlePositionsBufferRead);
-        physicsEngine.Hash.MapTable();
-
-        shader.Dispatch(kernelComputeDensityPressure, groupSize, 1, 1);
-
-        shader.Dispatch(kernelComputeForces, groupSize, 1, 1);
-        
-        physicsEngine.iniAdabtiveTimeStep();
-        shader.Dispatch(kernelComputeColliders, groupSize, 1, 1);
-        physicsEngine.adaptiveTimeStep();
-
+        SPHManager.Update();
         
         // Rendering
         renderWater = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Water")];
@@ -87,7 +59,7 @@ public class Manager : MonoBehaviour
 
         if (renderWater)
         {
-            m_volume.FillVolume(body, physicsEngine.Hash, waterKernel, physicsEngine.particlePositionsBufferRead, physicsEngine.particlesDensityBuffer);
+            m_volume.FillVolume(body, SPHManager.Hash, waterKernel, SPHManager.particlePositionsBufferRead, SPHManager.particlesDensityBuffer);
             m_volume.Hide = false;
         }
         else m_volume.Hide = true;
@@ -98,7 +70,7 @@ public class Manager : MonoBehaviour
             if (isRadixSort)
             {
                 Bounds bounds = new Bounds(Vector3.zero, Vector3.one * 0);
-                r_material.SetBuffer("particles", physicsEngine.particlePositionsBufferRead);
+                r_material.SetBuffer("particles", SPHManager.particlePositionsBufferRead);
                 Graphics.DrawMeshInstancedIndirect(particleMesh, 0, r_material, bounds, argsBuffer);
             }
             else
@@ -107,59 +79,44 @@ public class Manager : MonoBehaviour
                 {
                     uint[] args = new uint[5] { 0, 0, 0, 0, 0 };
                     args[0] = particleMesh.GetIndexCount(0);
-                    args[1] = (uint)physicsEngine.particlesNumber;
+                    args[1] = (uint)SPHManager.particlesNumber;
 
                     m_argsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
                     m_argsBuffer.SetData(args);
-                    material.SetBuffer("positions", physicsEngine.particlePositionsBufferRead);
+                    material.SetBuffer("positions", SPHManager.particlePositionsBufferRead);
                     material.SetColor("color", Color.cyan);
-                    material.SetFloat("diameter", physicsEngine.particleRadius);
+                    material.SetFloat("diameter", SPHManager.particleRadius);
                 }
 
 
                 ShadowCastingMode castShadow = ShadowCastingMode.Off;
                 bool recieveShadow = false;
 
-                Graphics.DrawMeshInstancedIndirect(particleMesh, 0, material, physicsEngine.boundr, m_argsBuffer, 0, null, castShadow, recieveShadow, 0, Camera.main);
+                Graphics.DrawMeshInstancedIndirect(particleMesh, 0, material, SPHManager.boundr, m_argsBuffer, 0, null, castShadow, recieveShadow, 0, Camera.main);
             }
         }
 
-        //m_volume.Hide = true;
-        physicsEngine.Hash.Clear();
+        SPHManager.clear();
 
     }
     
     void initShader()
     {
-        kernelComputeDensityPressure = shader.FindKernel("ComputeDensityPressure");
-        kernelComputeForces = shader.FindKernel("ComputeForces");
-        kernelComputeColliders = shader.FindKernel("ComputeColliders");
-
-
-        // Manager
-        shader.SetInt("particleCount", physicsEngine.particlesNumber);
-
-
         // Rendering
         argsArray[0] = particleMesh.GetIndexCount(0);
-        argsArray[1] = (uint)physicsEngine.particlesNumber;
+        argsArray[1] = (uint)SPHManager.particlesNumber;
         argsBuffer = new ComputeBuffer(1, 5 * sizeof(uint), ComputeBufferType.IndirectArguments);
         argsBuffer.SetData(argsArray);
-        r_material.SetBuffer("particles",physicsEngine.particlePositionsBufferRead);
-        r_material.SetFloat("_Radius", physicsEngine.particleRadius);
+        r_material.SetBuffer("particles",SPHManager.particlePositionsBufferRead);
+        r_material.SetFloat("_Radius", SPHManager.particleRadius);
 
-        m_volume = new RenderVolume(physicsEngine.boundr, physicsEngine.particleRadius);
+        m_volume = new RenderVolume(SPHManager.boundr, SPHManager.particleRadius);
         m_volume.CreateMesh(m_volumeMat);
     }
 
      private void OnDestroy()
     {
-        physicsEngine.Hash.Dispose();
-        if(physicsEngine.Hash.radix)physicsEngine.Hash._GPUSorter.Free();
-        physicsEngine.particlesBufferRead.Dispose();
-        physicsEngine.particlesDensityBuffer.Dispose();
-        physicsEngine.particlePositionsBufferRead.Dispose();
-        physicsEngine.particlePositionsBufferWrite.Dispose();
+        SPHManager.OnDestroy();
         surfaceColliderManager.OnDestroy();
         argsBuffer.Dispose();
     }
