@@ -33,7 +33,6 @@ shared StructuredBuffer<int2> IndexMap;
 RWStructuredBuffer<int> wrongStep;
 
 
-//Passed from SPHFluid.cs
 int positionBufferIndex;
 
 bool tsunamiIsTriggered = false;
@@ -51,16 +50,16 @@ float mass;
 float rest_density;
 float pdist;
 float particleRadius;
-float H;// kernel radius
-float H2;// h2 = h * h;
+float H;
+float H2;
 float acc_limit;
 float damping;
 float bound_repul;
 
-float Kp;// Pressure Stiffness
-float visc;// Viscosity
-float tension;// Surface Tension
-float dt;// time step
+float Kp;
+float visc;
+float tension;
+float dt;
 
 float Wpoly6C;
 float Grad_WspikeC;
@@ -254,11 +253,11 @@ void ComputeForces (int id : SV_DispatchThreadID)
     float particleDensity = particlesDensity[id.x];
         
 
-    float3 f_out = particleDensity * g; // Gravitation
+    float3 f_out = particleDensity * g;
 
-    float3 f_tens = float3(0, 0, 0); // Surface Tension
-    float3 f_pres = float3(0, 0, 0); // Pressure Gradient
-    float3 f_visc = float3(0, 0, 0); // Viscosity
+    float3 f_tens = float3(0, 0, 0);
+    float3 f_pres = float3(0, 0, 0);
+    float3 f_visc = float3(0, 0, 0);
 
     int3 hashIndex = HashIndex(particlePosition);
     int3 size = HashSize;
