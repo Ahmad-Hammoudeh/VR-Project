@@ -2864,7 +2864,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   shader: {fileID: 7200000, guid: 28f17c04f6d25406a8724b8cd6cd11c2, type: 3}
-  tsunamiMovement: {fileID: 1099955527}
   boundary: {fileID: 1508616939}
   material: {fileID: 2100000, guid: 69c64bbd328092c478d093f1a0554530, type: 2}
   r_material: {fileID: 2100000, guid: c7696bd9a45e44d37888848b0085bed1, type: 2}

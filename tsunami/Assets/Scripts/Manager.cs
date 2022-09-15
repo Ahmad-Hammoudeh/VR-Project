@@ -37,14 +37,17 @@ public class Manager : MonoBehaviour
             SliderUI.slidersValues[SliderUI.getIndex("Particles")] ,
             shader);
 
-        //waterKernel = new Kernel(SPHManager.particleRadius, SPHManager.particleRadius * SPHManager.particleRadius, 29.296875f * Mathf.Pow(particleRadius , 10f)); // 15000.0f / 1.0f);
+        // initialize Water Rendering
         waterKernel = new Kernel(SPHManager.particleRadius, SPHManager.particleRadius * SPHManager.particleRadius
             , 7680000f / Mathf.Pow(SPHManager.particleRadius, 9));
 
         body = new FluidBody(SPHManager.particleDensity, SPHManager.particlesNumber, SPHManager.ParticleVolume);
+        // =============
 
+        // intialize surface colliders
         surfaceColliderManager.shader = shader;
         surfaceColliderManager.fetchColliders();
+        // =============
 
         initShader();
     }
@@ -52,8 +55,14 @@ public class Manager : MonoBehaviour
     private void Update()
     {
         SPHManager.Update();
-        
-        // Rendering
+
+        rendering();
+
+        SPHManager.clear();
+    }
+    
+    void rendering()
+    {
         renderWater = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Water")];
         renderParticles = SwitchToggle.toggleValues[SwitchToggle.getIndex("Render Particles")];
 
@@ -95,11 +104,7 @@ public class Manager : MonoBehaviour
                 Graphics.DrawMeshInstancedIndirect(particleMesh, 0, material, SPHManager.boundr, m_argsBuffer, 0, null, castShadow, recieveShadow, 0, Camera.main);
             }
         }
-
-        SPHManager.clear();
-
     }
-    
     void initShader()
     {
         // Rendering
